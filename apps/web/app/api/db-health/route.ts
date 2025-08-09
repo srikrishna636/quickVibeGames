@@ -1,17 +1,19 @@
 import { Client } from "pg";
 
 export async function GET() {
-  const url = process.env.DATABASE_URL;
-  if (!url) return new Response("Missing DATABASE_URL", { status: 500 });
-  const client = new Client({ connectionString: url });
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) {
+    return new Response(JSON.stringify({ ok: false, error: "Missing DATABASE_URL" }), { status: 500 });
+  }
+
+  const client = new Client({ connectionString });
   try {
     await client.connect();
-    const res = await client.query("select 1 as ok");
+    const res = await client.query<{ ok: number }>("select 1 as ok");
     return Response.json({ ok: res.rows?.[0]?.ok === 1 });
-  } catch (err: any) {
-    return new Response(JSON.stringify({ ok: false, error: String(err) }), {
-      status: 500,
-    });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    return new Response(JSON.stringify({ ok: false, error: message }), { status: 500 });
   } finally {
     await client.end().catch(() => {});
   }
