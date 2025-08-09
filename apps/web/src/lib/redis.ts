@@ -1,3 +1,4 @@
+// C:\Users\srikr\code\quickvibe\apps\web\src\lib\redis.ts
 import { Redis } from "@upstash/redis";
 
 export function getRedis() {
