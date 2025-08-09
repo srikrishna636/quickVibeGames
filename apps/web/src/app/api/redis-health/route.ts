@@ -7,7 +7,6 @@ export async function GET() {
     if (!url || !token) {
       return new Response(JSON.stringify({ ok: false, error: "Missing Upstash env vars" }), { status: 500 });
     }
-
     const redis = new Redis({ url, token });
     const pong = await redis.ping();
     return Response.json({ ok: true, pong });

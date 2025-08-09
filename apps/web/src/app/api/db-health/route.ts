@@ -5,7 +5,6 @@ export async function GET() {
   if (!connectionString) {
     return new Response(JSON.stringify({ ok: false, error: "Missing DATABASE_URL" }), { status: 500 });
   }
-
   const client = new Client({ connectionString });
   try {
     await client.connect();
