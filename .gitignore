@@ -1,0 +1,14 @@
+# deps
+node_modules/
+
+# builds
+.next/
+apps/**/.next/
+dist/
+out/
+.vercel/
+
+# env
+.env
+.env.*.local
+apps/**/.env*

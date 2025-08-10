@@ -1,0 +1,11 @@
+{
+	"dependencies": {
+		"colyseus": "^0.16.4",
+		"express": "^5.1.0"
+	},
+	"devDependencies": {
+		"@types/node": "^20.19.10",
+		"tsx": "^4.20.3",
+		"typescript": "^5.9.2"
+	}
+}
