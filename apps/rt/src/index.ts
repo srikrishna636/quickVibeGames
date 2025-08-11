@@ -7,7 +7,7 @@ import { DuoRoom } from "./rooms/DuoRoom";
 const PORT = Number(process.env.PORT ?? 2567);
 
 const app = express();
-app.use(cors());
+app.use(cors({ origin: ["https://quickvibe.games", /\.vercel\.app$/], credentials: false }));
 app.use(express.json());
 
 const server = http.createServer(app);
