@@ -58,6 +58,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@qv/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@upstash/redis':
         specifier: ^1.35.3
         version: 1.35.3
@@ -113,6 +116,8 @@ importers:
       typescript:
         specifier: ^5
         version: 5.9.2
+
+  packages/shared: {}
 
 packages:
 

@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@qv/shared": "workspace:*",
     "@upstash/redis": "^1.35.3",
     "colyseus.js": "^0.16.19",
     "next": "15.4.6",
