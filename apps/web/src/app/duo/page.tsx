@@ -19,7 +19,7 @@ export default function Duo() {
   const [phase, setPhase] = useState<"idle"|"joined"|"countdown"|"playing"|"done">("idle");
 
   const startAtRef = useRef<number | null>(null);
-  const timerRef   = useRef<any>(null);
+  const timerRef   = useRef<ReturnType<typeof setInterval> | null>(null);
   const countRef   = useRef(0);
   useEffect(() => { countRef.current = count; }, [count]);
 
@@ -32,19 +32,19 @@ export default function Duo() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code: c }),
     });
-    const data = await res.json();
-    if (!res.ok || !data?.ok) throw new Error(data?.error || "match failed");
+    const data: { ok?: boolean; roomId?: string; error?: string } = await res.json();
+    if (!res.ok || !data?.ok || !data.roomId) throw new Error(data?.error || "match failed");
 
-    const roomId: string = data.roomId;
+    const roomId = data.roomId;
 
     // retry join a few times to avoid "room not found" race
     async function joinByIdWithRetry(id: string, tries = 8, waitMs = 200) {
-      let last: any;
+      let last: unknown;
       for (let i = 0; i < tries; i++) {
         try {
           return await client.joinById(id);
-        } catch (e: any) {
-          const msg = String(e?.message || e);
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
           if (msg.includes("not found") && i < tries - 1) {
             await new Promise((r) => setTimeout(r, waitMs));
             continue;
@@ -53,7 +53,8 @@ export default function Duo() {
           break;
         }
       }
-      throw last ?? new Error("join failed");
+      const err = last instanceof Error ? last : new Error(String(last));
+      throw err;
     }
 
     const r = await joinByIdWithRetry(roomId);
@@ -72,18 +73,18 @@ export default function Duo() {
         if (msLeft(at) <= 0) {
           setPhase("playing");
           startAtRef.current = null;
-          clearInterval(timerRef.current);
+          if (timerRef.current) clearInterval(timerRef.current);
           setTimeout(() => {
             r.send("score", { score: countRef.current, durationMs: 10000 });
             setPhase("done");
           }, 10000);
         }
       };
-      clearInterval(timerRef.current);
+      if (timerRef.current) clearInterval(timerRef.current);
       timerRef.current = setInterval(tick, 50);
     });
 
-    r.onMessage("chat", (m) => push(`chat: ${JSON.stringify(m)}`));
+    r.onMessage("chat", (m: unknown) => push(`chat: ${JSON.stringify(m)}`));
     r.onMessage("result", (payload: { scores: Record<string,number>, winner: string|null }) => {
       const myId  = r.sessionId;
       const hisId = Object.keys(payload.scores).find((k) => k !== myId);

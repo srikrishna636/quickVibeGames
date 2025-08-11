@@ -24,22 +24,22 @@ export default function Quickmatch() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code: c }),
     });
-    const data = await res.json();
-    if (!res.ok || !data?.ok) throw new Error(data?.error || "match failed");
-    return data.roomId as string;
+    const data: { ok?: boolean; roomId?: string; error?: string } = await res.json();
+    if (!res.ok || !data?.ok || !data.roomId) throw new Error(data?.error || "match failed");
+    return data.roomId;
   }
 
   async function joinByIdWithRetry(roomId: string, tries = 8, waitMs = 200) {
     for (let i = 0; i < tries; i++) {
       try {
         return await client.joinById(roomId);
-      } catch (e: any) {
-        const msg = String(e?.message || e);
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
         if (msg.includes("not found") && i < tries - 1) {
           await new Promise((r) => setTimeout(r, waitMs));
           continue;
         }
-        throw e;
+        throw e instanceof Error ? e : new Error(String(e));
       }
     }
   }
@@ -54,19 +54,19 @@ export default function Quickmatch() {
       push(`${host ? "Created/Found" : "Joining"} code ${c} -> ${roomId}`);
 
       if (host) {
-        // As the host, just tell the user to open /duo
         push(`Host ready. Open /duo?code=${c} in both tabs to play.`);
         return;
       }
 
       const room = await joinByIdWithRetry(roomId);
-      push("joined: " + room.roomId);
+      push("joined: " + (room?.roomId ?? "(unknown)"));
 
-      room.onMessage("chat", (m) => push("chat: " + JSON.stringify(m)));
-      room.onMessage("ready", () => push("READY: both players present"));
-      room.send("chat", { msg: "guest hello" });
-    } catch (e: any) {
-      push("error: " + (e?.message ?? String(e)));
+      room?.onMessage("chat", (m: unknown) => push("chat: " + JSON.stringify(m)));
+      room?.onMessage("ready", () => push("READY: both players present"));
+      room?.send("chat", { msg: "guest hello" });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      push("error: " + msg);
     } finally {
       setBusy(false);
     }
@@ -113,7 +113,7 @@ export default function Quickmatch() {
       </pre>
 
       <p className="text-white/60 text-sm">
-        After **Create / Host**, open <b>/duo?code={code}</b> in both tabs to play the match.
+        After <b>Create / Host</b>, open <b>/duo?code={code}</b> in both tabs to play the match.
       </p>
     </div>
   );

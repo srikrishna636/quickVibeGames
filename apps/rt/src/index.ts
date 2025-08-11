@@ -1,5 +1,5 @@
 import http from "http";
-import express from "express";
+import express, { Request, Response } from "express";
 import cors from "cors";
 import { Server, matchMaker } from "colyseus";
 import { DuoRoom } from "./rooms/DuoRoom";
@@ -19,10 +19,10 @@ const codeMap = new Map<string, string>();
 gameServer.define("duo", DuoRoom);
 
 // health
-app.get("/", (_req, res) => res.send("ok"));
+app.get("/", (_req: Request, res: Response) => res.send("ok"));
 
 // POST /match { code: "AB12" } -> { ok:true, roomId:"..." }
-app.post("/match", async (req, res) => {
+app.post("/match", async (req: Request, res: Response) => {
   try {
     const codeRaw = String((req.body?.code ?? "")).toUpperCase().slice(0, 8);
     if (!codeRaw) return res.status(400).json({ ok: false, error: "code required" });
@@ -39,8 +39,9 @@ app.post("/match", async (req, res) => {
     }, 60 * 60 * 1000);
 
     return res.json({ ok: true, roomId: room.roomId });
-  } catch (e: any) {
-    return res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return res.status(500).json({ ok: false, error: msg });
   }
 });
 
