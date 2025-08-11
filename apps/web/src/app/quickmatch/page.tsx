@@ -99,12 +99,21 @@ export default function Quickmatch() {
   async function shareInvite() {
     if (typeof navigator !== "undefined" && "share" in navigator) {
       try {
-        // @ts-expect-error: Web Share API presence checked above
-        await navigator.share({ title: "QuickVibe Duo", text: "Join my match!", url: inviteUrl });
+        const nav = navigator as Navigator & {
+          share?: (data: ShareData) => Promise<void>;
+        };
+
+        await nav.share?.({
+          title: "QuickVibe Duo",
+          text: "Join my match!",
+          url: inviteUrl,
+        });
+
+        return; // sharing succeeded, we're done
       } catch {
-        // ignore cancel
+        // user cancelled / not allowed — fall through to clipboard fallback
       }
-    } else {
+} else {
       await copyInvite();
     }
   }
