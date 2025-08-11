@@ -1,83 +1,110 @@
 "use client";
+
 import { useEffect, useMemo, useState } from "react";
-import * as Colyseus from "colyseus.js";
+import { useRouter } from "next/navigation";
 
-type DuoState = {
-  seats: string[];
-  startedAt?: number;
-  results?: { scores: Record<string, number>; winner: string | null };
-};
+type CopyState = "idle" | "ok" | "err";
 
-function randomCode() {
+const GAME_SLUG = "duo"; // future-proof: change to another slug if needed
+
+function randomCode(len = 4) {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  return Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+  return Array.from({ length: len }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
 }
 
-export default function Quickmatch() {
-  const [code, setCode] = useState(randomCode());
+function inviteUrlFor(origin: string, code: string) {
+  const clean = code.toUpperCase().trim();
+  return `${origin}/play/${GAME_SLUG}?code=${encodeURIComponent(clean)}`;
+}
+
+async function safeShare(url: string) {
+  try {
+    const nav = navigator as Navigator & { share?: (data: ShareData) => Promise<void> };
+    if (nav.share) {
+      await nav.share({ title: "QuickVibe Duo", text: "Join my match!", url });
+      return true;
+    }
+  } catch {
+    // user cancelled / not allowed
+  }
+  try {
+    if ("clipboard" in navigator && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(url);
+      return true;
+    }
+  } catch {
+    // ignore; fallback below
+  }
+  // last-resort copy
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = url;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "absolute";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export default function QuickmatchPage() {
+  const router = useRouter();
+
+  const [code, setCode] = useState<string>(randomCode());
   const [log, setLog] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
-  const [copied, setCopied] = useState<"idle" | "ok" | "err">("idle");
+  const [copied, setCopied] = useState<CopyState>("idle");
+  const [reserved, setReserved] = useState(false); // true after Create/Host successfully reserves a room
 
-  const urlWS = process.env.NEXT_PUBLIC_RT_URL || "ws://localhost:2567";
   const urlHTTP = process.env.NEXT_PUBLIC_RT_HTTP || "http://localhost:2567";
-  const client = useMemo(() => new Colyseus.Client(urlWS), [urlWS]);
 
-  const inviteUrl = useMemo(
-    () => `https://quickvibe.games/duo?code=${code.toUpperCase().trim()}`,
-    [code]
-  );
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const inviteUrl = useMemo(() => inviteUrlFor(origin, code), [origin, code]);
 
   const push = (m: string) => setLog((L) => [...L, m]);
 
-  async function createOrGetRoomId(c: string): Promise<string> {
+  useEffect(() => {
+    setLog([]);
+    setReserved(false);
+    setCopied("idle");
+  }, [code]);
+
+  function normalize(input: string) {
+    return input.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
+  }
+
+  async function reserveRoom(c: string) {
+    type MatchResp = { ok?: boolean; roomId?: string; error?: string };
     const res = await fetch(`${urlHTTP}/match`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: c }),
+      body: JSON.stringify({ slug: GAME_SLUG, code: c })
     });
-    const data: { ok?: boolean; roomId?: string; error?: string } = await res.json();
-    if (!res.ok || !data?.ok || !data.roomId) throw new Error(data?.error || "match failed");
+    const data = (await res.json()) as MatchResp;
+    if (!res.ok || !data.ok || !data.roomId) {
+      throw new Error(data.error || "match failed");
+    }
     return data.roomId;
   }
 
-  async function joinByIdWithRetry(roomId: string, tries = 8, waitMs = 200): Promise<Colyseus.Room<DuoState>> {
-    for (let i = 0; i < tries; i++) {
-      try {
-        return await client.joinById<DuoState>(roomId);
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        if (msg.includes("not found") && i < tries - 1) {
-          await new Promise((r) => setTimeout(r, waitMs));
-          continue;
-        }
-        throw e instanceof Error ? e : new Error(String(e));
-      }
+  async function onCreateHost() {
+    const c = normalize(code);
+    if (c.length < 4) {
+      push("error: code must be at least 4 characters (A–Z / 2–9)");
+      return;
     }
-    throw new Error("join failed");
-  }
-
-  async function go(host: boolean) {
     setBusy(true);
     try {
-      const c = code.toUpperCase().trim();
-      if (!/^[A-Z0-9]{4,8}$/.test(c)) throw new Error("invalid code");
-
-      const roomId = await createOrGetRoomId(c);
-      push(`${host ? "Created/Found" : "Joining"} code ${c} -> ${roomId}`);
-
-      if (host) {
-        push(`Host ready. Share this link: ${inviteUrl}`);
-        return;
-      }
-
-      const room = await joinByIdWithRetry(roomId);
-      push("joined: " + room.roomId);
-
-      room.onMessage("chat", (m: unknown) => push("chat: " + JSON.stringify(m)));
-      room.onMessage("ready", () => push("READY: both players present"));
-      room.send("chat", { msg: "guest hello" });
-    } catch (e: unknown) {
+      const roomId = await reserveRoom(c);
+      setReserved(true);
+      push(`host: code ${c} → room ${roomId}`);
+      push(`share this link: ${inviteUrlFor(origin, c)}`);
+    } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       push("error: " + msg);
     } finally {
@@ -85,72 +112,73 @@ export default function Quickmatch() {
     }
   }
 
-  async function copyInvite() {
-    try {
-      await navigator.clipboard.writeText(inviteUrl);
-      setCopied("ok");
-      setTimeout(() => setCopied("idle"), 1500);
-    } catch {
-      setCopied("err");
-      setTimeout(() => setCopied("idle"), 1500);
+  function onJoin() {
+    const c = normalize(code);
+    if (c.length < 4) {
+      push("error: code must be at least 4 characters (A–Z / 2–9)");
+      return;
     }
+    router.push(`/play/${GAME_SLUG}?code=${encodeURIComponent(c)}`);
   }
 
-  async function shareInvite() {
-    if (typeof navigator !== "undefined" && "share" in navigator) {
-      try {
-        const nav = navigator as Navigator & {
-          share?: (data: ShareData) => Promise<void>;
-        };
-
-        await nav.share?.({
-          title: "QuickVibe Duo",
-          text: "Join my match!",
-          url: inviteUrl,
-        });
-
-        return; // sharing succeeded, we're done
-      } catch {
-        // user cancelled / not allowed — fall through to clipboard fallback
-      }
-} else {
-      await copyInvite();
-    }
+  function onQuick() {
+    router.push(`/play/${GAME_SLUG}?quick=1`);
   }
 
-  useEffect(() => setLog([]), [code]);
+  async function onCopy() {
+    const ok = await safeShare(inviteUrl);
+    setCopied(ok ? "ok" : "err");
+    setTimeout(() => setCopied("idle"), 1500);
+    if (ok) push("invite link copied/shared");
+    else push("copy failed (try manually)");
+  }
 
   return (
     <div className="space-y-6">
-      <h1 className="text-3xl font-bold">Quickmatch (2-player)</h1>
+      <h1 className="text-3xl font-bold">Quickmatch — {GAME_SLUG.toUpperCase()}</h1>
 
       <div className="flex flex-wrap items-center gap-3">
         <input
           value={code}
-          onChange={(e) => setCode(e.target.value.toUpperCase())}
+          onChange={(e) => setCode(normalize(e.target.value))}
           className="rounded-xl bg-white/5 border border-white/10 px-4 py-2 font-mono"
           maxLength={8}
           aria-label="Room code"
+          placeholder="AB12"
         />
+
         <button
           className="rounded-2xl px-4 py-2 bg-gradient-to-r from-mint to-aqua text-ink font-semibold disabled:opacity-50"
-          onClick={() => go(true)}
+          onClick={onCreateHost}
           disabled={busy}
+          title="Create or reuse a room for this friend code"
         >
           Create / Host
         </button>
+
         <button
           className="rounded-2xl px-4 py-2 border border-white/15 hover:bg-white/5 disabled:opacity-50"
-          onClick={() => go(false)}
+          onClick={onJoin}
           disabled={busy}
+          title="Join the room using this code"
         >
           Join
         </button>
+
         <button
           className="rounded-2xl px-4 py-2 border border-white/15 hover:bg-white/5"
           onClick={() => setCode(randomCode())}
+          title="Generate a new random code"
         >
           New code
+        </button>
+
+        <button
+          className="rounded-2xl px-4 py-2 border border-white/15 hover:bg-white/5"
+          onClick={onQuick}
+          title="Quickmatch (no code)"
+        >
+          Quickmatch
         </button>
       </div>
 
@@ -164,18 +192,21 @@ export default function Quickmatch() {
         />
         <button
           className="rounded-2xl px-4 py-2 border border-white/15 hover:bg-white/5"
-          onClick={copyInvite}
-          title="Copy invite link"
+          onClick={onCopy}
+          title="Copy (or share on mobile) the invite link"
         >
-          {copied === "ok" ? "Copied ✓" : copied === "err" ? "Copy failed" : "Copy link"}
+          {copied === "ok" ? "Copied ✓" : copied === "err" ? "Copy failed" : "Copy / Share"}
         </button>
-        <button
-          className="rounded-2xl px-4 py-2 bg-gradient-to-r from-aqua to-mint text-ink font-semibold"
-          onClick={shareInvite}
-          title="Share link"
-        >
-          Share
-        </button>
+
+        {reserved && (
+          <button
+            className="rounded-2xl px-4 py-2 bg-gradient-to-r from-aqua to-mint text-ink font-semibold"
+            onClick={() => router.push(`/play/${GAME_SLUG}?code=${encodeURIComponent(code)}`)}
+            title="Open the game now"
+          >
+            Open Game
+          </button>
+        )}
       </div>
 
       <pre className="text-xs whitespace-pre-wrap bg-black/40 rounded-xl p-4 border border-white/10 min-h-[140px]">
@@ -183,7 +214,8 @@ export default function Quickmatch() {
       </pre>
 
       <p className="text-white/60 text-sm">
-        After <b>Create / Host</b>, open <b>/duo?code={code}</b> in both tabs to play the match.
+        Tip: share the invite link with a friend. They’ll land on{" "}
+        <code className="px-1 py-0.5 bg-white/10 rounded">/play/{GAME_SLUG}?code=XXXX</code>.
       </p>
     </div>
   );
