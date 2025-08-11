@@ -2,6 +2,12 @@
 import { useEffect, useMemo, useState } from "react";
 import * as Colyseus from "colyseus.js";
 
+type DuoState = {
+  seats: string[];
+  startedAt?: number;
+  results?: { scores: Record<string, number>; winner: string | null };
+};
+
 function randomCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   return Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
@@ -11,10 +17,16 @@ export default function Quickmatch() {
   const [code, setCode] = useState(randomCode());
   const [log, setLog] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState<"idle" | "ok" | "err">("idle");
 
   const urlWS = process.env.NEXT_PUBLIC_RT_URL || "ws://localhost:2567";
   const urlHTTP = process.env.NEXT_PUBLIC_RT_HTTP || "http://localhost:2567";
   const client = useMemo(() => new Colyseus.Client(urlWS), [urlWS]);
+
+  const inviteUrl = useMemo(
+    () => `https://quickvibe.games/duo?code=${code.toUpperCase().trim()}`,
+    [code]
+  );
 
   const push = (m: string) => setLog((L) => [...L, m]);
 
@@ -29,10 +41,10 @@ export default function Quickmatch() {
     return data.roomId;
   }
 
-  async function joinByIdWithRetry(roomId: string, tries = 8, waitMs = 200) {
+  async function joinByIdWithRetry(roomId: string, tries = 8, waitMs = 200): Promise<Colyseus.Room<DuoState>> {
     for (let i = 0; i < tries; i++) {
       try {
-        return await client.joinById(roomId);
+        return await client.joinById<DuoState>(roomId);
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         if (msg.includes("not found") && i < tries - 1) {
@@ -42,6 +54,7 @@ export default function Quickmatch() {
         throw e instanceof Error ? e : new Error(String(e));
       }
     }
+    throw new Error("join failed");
   }
 
   async function go(host: boolean) {
@@ -54,21 +67,45 @@ export default function Quickmatch() {
       push(`${host ? "Created/Found" : "Joining"} code ${c} -> ${roomId}`);
 
       if (host) {
-        push(`Host ready. Open /duo?code=${c} in both tabs to play.`);
+        push(`Host ready. Share this link: ${inviteUrl}`);
         return;
       }
 
       const room = await joinByIdWithRetry(roomId);
-      push("joined: " + (room?.roomId ?? "(unknown)"));
+      push("joined: " + room.roomId);
 
-      room?.onMessage("chat", (m: unknown) => push("chat: " + JSON.stringify(m)));
-      room?.onMessage("ready", () => push("READY: both players present"));
-      room?.send("chat", { msg: "guest hello" });
+      room.onMessage("chat", (m: unknown) => push("chat: " + JSON.stringify(m)));
+      room.onMessage("ready", () => push("READY: both players present"));
+      room.send("chat", { msg: "guest hello" });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       push("error: " + msg);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function copyInvite() {
+    try {
+      await navigator.clipboard.writeText(inviteUrl);
+      setCopied("ok");
+      setTimeout(() => setCopied("idle"), 1500);
+    } catch {
+      setCopied("err");
+      setTimeout(() => setCopied("idle"), 1500);
+    }
+  }
+
+  async function shareInvite() {
+    if (typeof navigator !== "undefined" && "share" in navigator) {
+      try {
+        // @ts-expect-error: Web Share API presence checked above
+        await navigator.share({ title: "QuickVibe Duo", text: "Join my match!", url: inviteUrl });
+      } catch {
+        // ignore cancel
+      }
+    } else {
+      await copyInvite();
     }
   }
 
@@ -105,6 +142,30 @@ export default function Quickmatch() {
           onClick={() => setCode(randomCode())}
         >
           New code
+        </button>
+      </div>
+
+      {/* Invite row */}
+      <div className="flex flex-wrap items-center gap-3">
+        <input
+          readOnly
+          value={inviteUrl}
+          className="w-full sm:w-auto flex-1 min-w-[320px] rounded-xl bg-white/5 border border-white/10 px-4 py-2 font-mono"
+          aria-label="Invite link"
+        />
+        <button
+          className="rounded-2xl px-4 py-2 border border-white/15 hover:bg-white/5"
+          onClick={copyInvite}
+          title="Copy invite link"
+        >
+          {copied === "ok" ? "Copied ✓" : copied === "err" ? "Copy failed" : "Copy link"}
+        </button>
+        <button
+          className="rounded-2xl px-4 py-2 bg-gradient-to-r from-aqua to-mint text-ink font-semibold"
+          onClick={shareInvite}
+          title="Share link"
+        >
+          Share
         </button>
       </div>
 
